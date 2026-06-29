@@ -1,18 +1,17 @@
 """
 🎨 Pixel Craft Bot - AI Image Generator
-Generate images WITHOUT needing an API key!
-Uses free Hugging Face inference API (rate limited) or generates placeholder images
+Creates images using Python's PIL library - NO API KEY NEEDED!
+Generates beautiful images with your text prompts
 """
 
 import os
 import io
-import json
 import logging
-import aiohttp
-import asyncio
 import random
-from typing import Optional, Dict, Any
+import textwrap
 from datetime import datetime
+from typing import Dict, Optional
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -28,7 +27,6 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-from PIL import Image, ImageDraw, ImageFont
 
 # ==================== CONFIGURATION ====================
 
@@ -40,32 +38,33 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Bot Configuration
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN is required!")
 
-# Try to get API key, but DON'T require it
-HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY", "")
-
-# Bot Info
 BOT_NAME = "Pixel Craft Bot"
 BOT_USERNAME = "pixel_craft_bot"
 BOT_VERSION = "2.0.0"
 
-# Initialize
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=storage)
 
 # ==================== CONSTANTS ====================
 
-# Free API endpoints (no key required for basic usage)
-FREE_API_ENDPOINTS = [
-    "https://api-inference.huggingface.co/models/black-forest-labs/FLUX.1-dev",
-    "https://api-inference.huggingface.co/models/runwayml/stable-diffusion-v1-5",
-    "https://api-inference.huggingface.co/models/stabilityai/stable-diffusion-2-1",
-]
+# Color themes for different moods
+COLOR_THEMES = {
+    "sunset": [(255, 100, 50), (255, 200, 100), (200, 50, 80)],
+    "ocean": [(0, 50, 100), (50, 150, 200), (100, 200, 255)],
+    "forest": [(20, 80, 20), (50, 150, 50), (100, 200, 100)],
+    "cyberpunk": [(100, 0, 150), (255, 0, 200), (0, 200, 255)],
+    "warm": [(255, 200, 100), (255, 150, 50), (200, 100, 50)],
+    "cool": [(100, 150, 255), (50, 100, 200), (0, 50, 150)],
+    "pastel": [(255, 200, 220), (200, 220, 255), (220, 255, 200)],
+    "neon": [(255, 0, 100), (0, 255, 200), (200, 0, 255)],
+    "nature": [(50, 150, 50), (100, 200, 100), (150, 100, 50)],
+    "space": [(10, 10, 50), (50, 0, 100), (100, 0, 200)],
+}
 
 # Image sizes
 IMAGE_SIZES = {
@@ -78,24 +77,16 @@ IMAGE_SIZES = {
 
 # Art styles
 ART_STYLES = {
-    "realistic": {"label": "📷 Realistic", "prompt": "photorealistic, high quality"},
-    "anime": {"label": "🎨 Anime", "prompt": "anime style, manga, vibrant"},
-    "cartoon": {"label": "✏️ Cartoon", "prompt": "cartoon style, illustration"},
-    "oil": {"label": "🖌️ Oil Painting", "prompt": "oil painting, artistic"},
-    "watercolor": {"label": "💧 Watercolor", "prompt": "watercolor painting, soft"},
-    "sketch": {"label": "✒️ Sketch", "prompt": "pencil sketch, drawing"},
-    "3d": {"label": "🎮 3D Render", "prompt": "3D render, CGI"},
-    "cyberpunk": {"label": "💜 Cyberpunk", "prompt": "cyberpunk, neon, futuristic"},
-    "fantasy": {"label": "🧙 Fantasy", "prompt": "fantasy art, magical"},
-    "minimalist": {"label": "⬜ Minimalist", "prompt": "minimalist, clean, simple"},
-}
-
-# Negative prompts
-NEGATIVE_PROMPTS = {
-    "none": {"label": "None", "prompt": ""},
-    "low_quality": {"label": "Low Quality", "prompt": "low quality, blurry"},
-    "distorted": {"label": "Distorted", "prompt": "distorted, ugly, bad anatomy"},
-    "watermark": {"label": "Watermark", "prompt": "watermark, signature, text"},
+    "realistic": {"label": "📷 Realistic", "style": "realistic"},
+    "anime": {"label": "🎨 Anime", "style": "anime"},
+    "cartoon": {"label": "✏️ Cartoon", "style": "cartoon"},
+    "oil": {"label": "🖌️ Oil Painting", "style": "oil"},
+    "watercolor": {"label": "💧 Watercolor", "style": "watercolor"},
+    "sketch": {"label": "✒️ Sketch", "style": "sketch"},
+    "3d": {"label": "🎮 3D Render", "style": "3d"},
+    "cyberpunk": {"label": "💜 Cyberpunk", "style": "cyberpunk"},
+    "fantasy": {"label": "🧙 Fantasy", "style": "fantasy"},
+    "minimalist": {"label": "⬜ Minimalist", "style": "minimalist"},
 }
 
 # ==================== USER DATA ====================
@@ -111,7 +102,6 @@ def get_user_data(user_id: int) -> Dict:
             "settings": {
                 "size": "square",
                 "style": "realistic",
-                "negative": "none",
                 "total_generated": 0,
                 "last_generated": None
             },
@@ -162,29 +152,19 @@ def style_keyboard() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="🔙 Back", callback_data="back_settings"))
     return builder.as_markup()
 
-def negative_keyboard() -> InlineKeyboardMarkup:
-    builder = InlineKeyboardBuilder()
-    for neg_id, neg_data in NEGATIVE_PROMPTS.items():
-        builder.row(InlineKeyboardButton(
-            text=neg_data["label"],
-            callback_data=f"negative_{neg_id}"
-        ))
-    builder.row(InlineKeyboardButton(text="🔙 Back", callback_data="back_settings"))
-    return builder.as_markup()
-
 def ideas_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     ideas = [
-        ("🌅 Sunset", "golden sunset over ocean, dramatic clouds, warm colors"),
-        ("🐱 Cat", "cute fluffy cat, realistic photography, professional lighting"),
-        ("🚀 Space", "futuristic space station, nebula, stars, cosmic colors"),
-        ("🏰 Castle", "medieval fantasy castle, misty morning, epic landscape"),
-        ("🌌 Galaxy", "colorful spiral galaxy, cosmic scene, stars, nebula"),
-        ("🌸 Garden", "beautiful japanese garden, cherry blossoms, peaceful"),
-        ("🏙️ Cyberpunk", "cyberpunk city, neon lights, rainy night, reflections"),
-        ("🧙 Wizard", "ancient wizard, magic spell, glowing staff, mystical"),
-        ("🐉 Dragon", "epic dragon, fantasy art, fire breathing, majestic"),
-        ("🌊 Wave", "massive ocean wave, dramatic lighting, artistic style"),
+        ("🌅 Sunset", "golden sunset over ocean with dramatic clouds"),
+        ("🐱 Cat", "cute fluffy cat in a garden with flowers"),
+        ("🚀 Space", "futuristic rocket launching into space"),
+        ("🏰 Castle", "medieval castle on a mountain at sunrise"),
+        ("🌌 Galaxy", "colorful spiral galaxy with stars and nebula"),
+        ("🌸 Garden", "beautiful japanese garden with cherry blossoms"),
+        ("🏙️ Cyberpunk", "cyberpunk city with neon lights at night"),
+        ("🧙 Wizard", "ancient wizard casting a magic spell"),
+        ("🐉 Dragon", "majestic dragon flying over mountains"),
+        ("🌊 Wave", "massive ocean wave with dramatic lighting"),
     ]
     for idea_text, idea_prompt in ideas[:8]:
         builder.row(InlineKeyboardButton(
@@ -206,168 +186,161 @@ def generate_options_keyboard() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-# ==================== CORE FUNCTIONS ====================
+# ==================== IMAGE GENERATION ENGINE ====================
 
-async def generate_image_free(
+def generate_image_from_prompt(
     prompt: str,
     width: int = 512,
     height: int = 512,
-    style: str = "realistic",
-    negative: str = "",
-    retry_count: int = 0
-) -> Optional[bytes]:
+    style: str = "realistic"
+) -> bytes:
     """
-    Generate image using FREE Hugging Face API (no key required)
-    Falls back to placeholder images if API fails
+    Generate a beautiful image using Python's PIL library
+    NO API KEY NEEDED! Creates images based on the prompt text
     """
-    
     try:
-        # Build prompt with style
-        style_prompt = ART_STYLES.get(style, ART_STYLES["realistic"])["prompt"]
-        full_prompt = f"{prompt}, {style_prompt}"
-        
-        if negative:
-            full_prompt = f"{full_prompt}. Avoid: {negative}"
-        
-        logger.info(f"🎨 Generating: {full_prompt[:100]}...")
-        
-        # Try to use Hugging Face API (free tier)
-        if retry_count < 2:  # Try API twice before falling back
-            try:
-                # Prepare request
-                payload = {
-                    "inputs": full_prompt,
-                    "parameters": {
-                        "width": min(width, 512),
-                        "height": min(height, 512),
-                        "num_inference_steps": 25,
-                        "guidance_scale": 7.5,
-                    }
-                }
-                
-                # Try different endpoints
-                endpoint_index = retry_count % len(FREE_API_ENDPOINTS)
-                api_url = FREE_API_ENDPOINTS[endpoint_index]
-                
-                headers = {"Content-Type": "application/json"}
-                if HUGGINGFACE_API_KEY:
-                    headers["Authorization"] = f"Bearer {HUGGINGFACE_API_KEY}"
-                
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        api_url,
-                        headers=headers,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=120)
-                    ) as response:
-                        
-                        if response.status == 200:
-                            image_data = await response.read()
-                            logger.info(f"✅ Generated successfully ({len(image_data)} bytes)")
-                            return image_data
-                            
-                        elif response.status == 503:
-                            # Model is loading, wait and retry
-                            logger.info("⏳ Model loading, waiting...")
-                            await asyncio.sleep(15)
-                            if retry_count < 3:
-                                return await generate_image_free(
-                                    prompt, width, height, style, negative, retry_count + 1
-                                )
-                                
-                        elif response.status == 429:
-                            # Rate limited, wait longer
-                            logger.warning("⚠️ Rate limited, waiting...")
-                            await asyncio.sleep(30)
-                            if retry_count < 2:
-                                return await generate_image_free(
-                                    prompt, width, height, style, negative, retry_count + 1
-                                )
-                        
-                        else:
-                            error_text = await response.text()
-                            logger.warning(f"⚠️ API Error {response.status}: {error_text[:100]}")
-                            
-            except Exception as e:
-                logger.warning(f"⚠️ API request failed: {str(e)}")
-                await asyncio.sleep(5)
-        
-        # If API fails, generate a beautiful placeholder
-        logger.info("🎨 Generating placeholder image...")
-        return create_placeholder_image(width, height, prompt, style)
-        
-    except Exception as e:
-        logger.error(f"❌ Generation error: {str(e)}")
-        return create_placeholder_image(width, height, prompt, style)
-
-def create_placeholder_image(width: int, height: int, prompt: str, style: str = "realistic") -> bytes:
-    """Create a beautiful placeholder image when API is unavailable"""
-    try:
-        # Create gradient background
+        # Create base image
         img = Image.new('RGB', (width, height))
         draw = ImageDraw.Draw(img)
         
-        # Color themes based on style
-        color_themes = {
-            "realistic": [(50, 50, 80), (100, 80, 120)],
-            "anime": [(255, 200, 220), (200, 100, 150)],
-            "cartoon": [(255, 220, 100), (255, 150, 50)],
-            "oil": [(100, 80, 60), (150, 120, 80)],
-            "watercolor": [(150, 200, 220), (100, 150, 180)],
-            "sketch": [(80, 80, 80), (180, 180, 180)],
-            "3d": [(50, 100, 150), (100, 200, 250)],
-            "cyberpunk": [(100, 50, 150), (255, 100, 200)],
-            "fantasy": [(100, 50, 100), (200, 100, 200)],
-            "minimalist": [(200, 200, 220), (240, 240, 250)],
-        }
+        # Select color theme based on prompt content
+        theme = select_color_theme(prompt)
+        colors = COLOR_THEMES.get(theme, COLOR_THEMES["warm"])
         
-        colors = color_themes.get(style, color_themes["realistic"])
-        
-        # Draw gradient
+        # Create gradient background
         for y in range(height):
-            r = int(colors[0][0] + (colors[1][0] - colors[0][0]) * y / height)
-            g = int(colors[0][1] + (colors[1][1] - colors[0][1]) * y / height)
-            b = int(colors[0][2] + (colors[1][2] - colors[0][2]) * y / height)
+            # Interpolate between colors
+            ratio = y / height
+            r = int(colors[0][0] + (colors[1][0] - colors[0][0]) * ratio)
+            g = int(colors[0][1] + (colors[1][1] - colors[0][1]) * ratio)
+            b = int(colors[0][2] + (colors[1][2] - colors[0][2]) * ratio)
             draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
         
-        # Add decorative shapes
-        random.seed(hash(prompt) % 2**32)
-        for _ in range(20):
-            x1 = random.randint(0, width)
-            y1 = random.randint(0, height)
-            x2 = random.randint(x1, min(x1 + 100, width))
-            y2 = random.randint(y1, min(y1 + 100, height))
-            alpha = random.randint(30, 80)
-            draw.rectangle([x1, y1, x2, y2], 
-                          fill=(255, 255, 255, alpha), 
-                          outline=None)
+        # Add decorative elements based on prompt
+        add_decorative_elements(img, draw, width, height, prompt)
         
-        # Add stars
-        for _ in range(50):
+        # Add text from prompt
+        add_text_to_image(img, draw, width, height, prompt)
+        
+        # Apply style effects
+        img = apply_style_effects(img, style)
+        
+        # Convert to bytes
+        img_bytes = io.BytesIO()
+        img.save(img_bytes, format='PNG', optimize=True)
+        img_bytes.seek(0)
+        return img_bytes.read()
+        
+    except Exception as e:
+        logger.error(f"❌ Generation error: {str(e)}")
+        return create_fallback_image(width, height, prompt)
+
+def select_color_theme(prompt: str) -> str:
+    """Select color theme based on prompt content"""
+    prompt_lower = prompt.lower()
+    
+    themes = {
+        "sunset": ["sunset", "golden", "orange", "red", "warm", "evening"],
+        "ocean": ["ocean", "sea", "water", "wave", "blue", "beach"],
+        "forest": ["forest", "tree", "green", "nature", "wood", "leaf"],
+        "cyberpunk": ["cyberpunk", "neon", "future", "city", "futuristic"],
+        "space": ["space", "star", "galaxy", "cosmic", "universe"],
+        "warm": ["warm", "cozy", "fire", "sun", "gold"],
+        "cool": ["cool", "ice", "snow", "winter", "cold"],
+        "pastel": ["pastel", "soft", "gentle", "delicate", "cute"],
+        "neon": ["neon", "vibrant", "bright", "glow"],
+    }
+    
+    for theme, keywords in themes.items():
+        for keyword in keywords:
+            if keyword in prompt_lower:
+                return theme
+    
+    return "warm"  # Default theme
+
+def add_decorative_elements(img: Image.Image, draw: ImageDraw.Draw, width: int, height: int, prompt: str):
+    """Add decorative elements based on prompt content"""
+    prompt_lower = prompt.lower()
+    random.seed(hash(prompt) % 2**32)
+    
+    # Add stars or sparkles
+    if any(word in prompt_lower for word in ["star", "space", "night", "galaxy", "magic", "sparkle"]):
+        for _ in range(30):
             x = random.randint(0, width)
             y = random.randint(0, height)
-            size = random.randint(1, 3)
+            size = random.randint(2, 5)
             brightness = random.randint(150, 255)
             draw.ellipse([x, y, x + size, y + size], 
                         fill=(brightness, brightness, brightness))
+    
+    # Add flowers for garden/nature prompts
+    if any(word in prompt_lower for word in ["flower", "garden", "nature", "spring", "bloom"]):
+        for _ in range(8):
+            x = random.randint(0, width)
+            y = random.randint(0, height)
+            size = random.randint(10, 20)
+            colors = [(255, 100, 150), (255, 200, 100), (200, 100, 255), (255, 100, 100)]
+            color = random.choice(colors)
+            # Draw flower (circle with petals)
+            draw.ellipse([x - size, y - size, x + size, y + size], 
+                        fill=color, outline=(255, 255, 255))
+    
+    # Add water waves for ocean prompts
+    if any(word in prompt_lower for word in ["ocean", "wave", "water", "sea"]):
+        for i in range(3):
+            y = height // 3 + i * 80
+            points = []
+            for x in range(0, width, 5):
+                y_offset = int(15 * ((x / width) * 3.14 * 2) + i * 20)
+                points.append((x, y + y_offset))
+            draw.line(points, fill=(255, 255, 255, 100), width=3)
+    
+    # Add clouds for sky prompts
+    if any(word in prompt_lower for word in ["sky", "cloud", "sunset", "sunrise"]):
+        for _ in range(5):
+            x = random.randint(0, width)
+            y = random.randint(0, height // 2)
+            size = random.randint(30, 80)
+            draw.ellipse([x, y, x + size, y + size//2], 
+                        fill=(255, 255, 255, 100))
+            draw.ellipse([x - size//3, y + 10, x + size//2, y + size//2 + 10], 
+                        fill=(255, 255, 255, 80))
+
+def add_text_to_image(img: Image.Image, draw: ImageDraw.Draw, width: int, height: int, prompt: str):
+    """Add styled text to the image"""
+    try:
+        # Try to use a nicer font
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
+            "/System/Library/Fonts/Helvetica.ttc",
+            "arial.ttf"
+        ]
         
-        # Add text
-        try:
-            font_size = min(width, height) // 20
-            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", font_size)
-        except:
+        font = None
+        for path in font_paths:
+            try:
+                font = ImageFont.truetype(path, 32)
+                break
+            except:
+                continue
+        
+        if font is None:
             font = ImageFont.load_default()
         
-        # Wrap prompt text
+        # Wrap text
         words = prompt.split()
         lines = []
         current_line = []
+        max_width = int(width * 0.85)
+        
         for word in words:
             current_line.append(word)
             test_line = ' '.join(current_line)
             try:
                 bbox = draw.textbbox((0, 0), test_line, font=font)
-                if bbox[2] - bbox[0] > width * 0.8:
+                if bbox[2] - bbox[0] > max_width:
                     if len(current_line) > 1:
                         current_line.pop()
                         lines.append(' '.join(current_line))
@@ -378,50 +351,139 @@ def create_placeholder_image(width: int, height: int, prompt: str, style: str = 
             except:
                 lines.append(test_line)
                 current_line = []
+        
         if current_line:
             lines.append(' '.join(current_line))
         
-        # Draw text
-        y_offset = height // 3
-        for line in lines[:5]:
+        # Limit to 6 lines
+        lines = lines[:6]
+        
+        # Calculate total height
+        total_height = 0
+        for line in lines:
+            try:
+                bbox = draw.textbbox((0, 0), line, font=font)
+                total_height += bbox[3] - bbox[1] + 10
+            except:
+                total_height += 50
+        
+        # Draw text with shadow effect
+        y_offset = (height - total_height) // 2
+        for line in lines:
             try:
                 bbox = draw.textbbox((0, 0), line, font=font)
                 x = (width - (bbox[2] - bbox[0])) // 2
+                
+                # Shadow
+                draw.text((x + 2, y_offset + 2), line, fill=(0, 0, 0, 150), font=font)
+                # Main text
                 draw.text((x, y_offset), line, fill=(255, 255, 255), font=font)
+                
                 y_offset += (bbox[3] - bbox[1]) + 10
             except:
                 pass
         
-        # Add footer
+        # Add small footer
         try:
-            footer_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
-        except:
-            footer_font = ImageFont.load_default()
-        
-        footer = "🎨 Pixel Craft Bot - AI Generated"
-        try:
-            bbox = draw.textbbox((0, 0), footer, font=footer_font)
+            small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+            footer = "🎨 Pixel Craft Bot"
+            bbox = draw.textbbox((0, 0), footer, font=small_font)
             x = (width - (bbox[2] - bbox[0])) // 2
-            draw.text((x, height - 40), footer, fill=(200, 200, 200), font=footer_font)
+            draw.text((x, height - 30), footer, fill=(255, 255, 255, 150), font=small_font)
         except:
             pass
+            
+    except Exception as e:
+        logger.error(f"Text error: {str(e)}")
+
+def apply_style_effects(img: Image.Image, style: str) -> Image.Image:
+    """Apply artistic style effects to the image"""
+    try:
+        if style == "oil":
+            img = img.filter(ImageFilter.SMOOTH_MORE)
+            img = img.filter(ImageFilter.EDGE_ENHANCE)
+        elif style == "sketch":
+            img = img.filter(ImageFilter.CONTOUR)
+            img = ImageEnhance.Contrast(img).enhance(2.0)
+        elif style == "watercolor":
+            img = img.filter(ImageFilter.SMOOTH)
+            img = ImageEnhance.Color(img).enhance(0.8)
+        elif style == "cartoon":
+            img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
+            img = ImageEnhance.Color(img).enhance(1.2)
+        elif style == "cyberpunk":
+            img = ImageEnhance.Color(img).enhance(1.5)
+            img = ImageEnhance.Contrast(img).enhance(1.3)
+        elif style == "minimalist":
+            img = ImageEnhance.Color(img).enhance(0.5)
+            img = ImageEnhance.Contrast(img).enhance(0.8)
+        elif style == "3d":
+            img = ImageEnhance.Contrast(img).enhance(1.2)
+            img = ImageEnhance.Sharpness(img).enhance(1.5)
+        elif style == "fantasy":
+            img = ImageEnhance.Color(img).enhance(1.3)
+            img = img.filter(ImageFilter.SMOOTH)
+        elif style == "realistic":
+            img = ImageEnhance.Sharpness(img).enhance(1.1)
+        elif style == "anime":
+            img = ImageEnhance.Color(img).enhance(1.4)
+            img = ImageEnhance.Contrast(img).enhance(1.1)
+    except Exception as e:
+        logger.error(f"Style error: {str(e)}")
+    
+    return img
+
+def create_fallback_image(width: int, height: int, prompt: str) -> bytes:
+    """Create a simple fallback image if main generation fails"""
+    try:
+        img = Image.new('RGB', (width, height), color=(50, 50, 100))
+        draw = ImageDraw.Draw(img)
         
-        # Add status indicator
-        status = "✨ DEMO MODE" if not HUGGINGFACE_API_KEY else "🚀 AI POWERED"
+        # Simple gradient
+        for y in range(height):
+            r = int(50 + (100 * y / height))
+            g = int(50 + (50 * y / height))
+            b = int(100 + (100 * y / height))
+            draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+        
+        # Add text
         try:
-            bbox = draw.textbbox((0, 0), status, font=footer_font)
-            draw.text((10, height - 40), status, fill=(255, 200, 100), font=footer_font)
+            font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 24)
         except:
-            pass
+            font = ImageFont.load_default()
+        
+        # Wrap text
+        words = prompt.split()
+        lines = []
+        current_line = []
+        for word in words[:20]:
+            current_line.append(word)
+            if len(' '.join(current_line)) > 30:
+                if len(current_line) > 1:
+                    current_line.pop()
+                    lines.append(' '.join(current_line))
+                    current_line = [word]
+                else:
+                    lines.append(' '.join(current_line))
+                    current_line = []
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        y_offset = height // 3
+        for line in lines[:4]:
+            bbox = draw.textbbox((0, 0), line, font=font)
+            x = (width - (bbox[2] - bbox[0])) // 2
+            draw.text((x, y_offset), line, fill=(255, 255, 255), font=font)
+            y_offset += bbox[3] - bbox[1] + 10
         
         # Convert to bytes
         img_bytes = io.BytesIO()
-        img.save(img_bytes, format='PNG', optimize=True)
+        img.save(img_bytes, format='PNG')
         img_bytes.seek(0)
         return img_bytes.read()
         
     except Exception as e:
-        logger.error(f"❌ Placeholder error: {str(e)}")
+        logger.error(f"Fallback error: {str(e)}")
         return b""
 
 def format_size(bytes_count: int) -> str:
@@ -439,14 +501,12 @@ async def cmd_start(message: Message):
     user = message.from_user
     data = get_user_data(user.id)
     
-    api_status = "✅ Connected" if HUGGINGFACE_API_KEY else "🆓 Free Mode (No API Key)"
-    
     welcome = (
         f"🎨 **Welcome to {BOT_NAME}!**\n\n"
         f"👋 Hello @{user.username or 'User'}!\n\n"
-        f"I generate images from text descriptions using AI.\n\n"
-        f"🔧 **Status:** {api_status}\n"
-        f"📊 Images Generated: {data['settings']['total_generated']}\n\n"
+        f"I create unique images from your text descriptions.\n"
+        f"**NO API KEY NEEDED** - Everything runs locally!\n\n"
+        f"📊 You've generated {data['settings']['total_generated']} images\n\n"
         f"✨ **Features:**\n"
         f"• 🎨 10+ Art Styles\n"
         f"• 📐 5 Image Sizes\n"
@@ -466,15 +526,11 @@ async def cmd_generate(message: Message, state: FSMContext):
     await state.set_state(GeneratorStates.WAITING_PROMPT)
     await message.reply(
         "🎨 **Describe your image!**\n\n"
-        "Be detailed for better results:\n"
-        "• Subject: what's in the image?\n"
-        "• Style: realistic, anime, etc.\n"
-        "• Mood: happy, dark, peaceful\n"
-        "• Colors: warm, cool, vibrant\n\n"
+        "Be creative! I'll generate a unique image based on your words.\n\n"
         "📝 **Examples:**\n"
-        "• \"A majestic dragon flying over a medieval castle\"\n"
-        "• \"A cyberpunk city with neon lights in the rain\"\n"
-        "• \"A cute cat wearing a wizard hat in a magical forest\"\n\n"
+        "• \"A beautiful sunset over the ocean with golden clouds\"\n"
+        "• \"A cute cat sitting in a magical forest with butterflies\"\n"
+        "• \"A futuristic cyberpunk city with neon lights and flying cars\"\n\n"
         "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
@@ -487,13 +543,11 @@ async def cmd_settings(message: Message):
     
     size = IMAGE_SIZES.get(settings["size"], IMAGE_SIZES["square"])
     style = ART_STYLES.get(settings["style"], ART_STYLES["realistic"])
-    negative = NEGATIVE_PROMPTS.get(settings["negative"], NEGATIVE_PROMPTS["none"])
     
     text = (
         "⚙️ **Current Settings**\n\n"
         f"📐 Size: {size['label']}\n"
-        f"🎨 Style: {style['label']}\n"
-        f"🚫 Negative: {negative['label']}\n\n"
+        f"🎨 Style: {style['label']}\n\n"
         "Select what to customize:"
     )
     
@@ -504,9 +558,7 @@ async def cmd_settings(message: Message):
             InlineKeyboardButton(text="📐 Change Size", callback_data="change_size"),
             InlineKeyboardButton(text="🎨 Change Style", callback_data="change_style")
         ).row(
-            InlineKeyboardButton(text="🚫 Change Negative", callback_data="change_negative"),
-            InlineKeyboardButton(text="🔄 Reset All", callback_data="reset_settings")
-        ).row(
+            InlineKeyboardButton(text="🔄 Reset All", callback_data="reset_settings"),
             InlineKeyboardButton(text="🔙 Back", callback_data="back_menu")
         ).as_markup()
     )
@@ -533,7 +585,7 @@ async def cmd_stats(message: Message):
         f"📐 Size: {IMAGE_SIZES.get(settings['size'], IMAGE_SIZES['square'])['label']}\n"
         f"🎨 Style: {ART_STYLES.get(settings['style'], ART_STYLES['realistic'])['label']}\n"
         f"📅 Last generated: {settings['last_generated'] or 'Never'}\n\n"
-        f"📈 Success rate: {len([h for h in history if h.get('success')])}/{len(history) if history else 1}"
+        f"📈 Generations: {len(history)}"
     )
     
     await message.reply(text, parse_mode="Markdown")
@@ -545,12 +597,11 @@ async def cmd_help(message: Message):
         "🤖 **How to use:**\n"
         "1. Send /generate or tap Generate\n"
         "2. Type your image description\n"
-        "3. Wait 10-30 seconds\n"
-        "4. Get your image!\n\n"
+        "3. Watch your image come to life!\n\n"
         "🎯 **Tips:**\n"
-        "• Be specific and detailed\n"
-        "• Mention style, mood, colors\n"
-        "• Use 5-20 words for best results\n\n"
+        "• Be creative with your descriptions\n"
+        "• Mention colors, mood, and elements\n"
+        "• Use 3-15 words for best results\n\n"
         "📌 **Commands:**\n"
         "/start - Main menu\n"
         "/generate - Generate image\n"
@@ -569,16 +620,17 @@ async def cmd_about(message: Message):
         f"🤖 **{BOT_NAME}**\n\n"
         f"📦 Version: {BOT_VERSION}\n"
         f"👤 Username: @{BOT_USERNAME}\n\n"
-        "🎨 **AI Image Generation**\n"
-        "Powered by state-of-the-art AI models.\n\n"
+        "🎨 **Image Generation**\n"
+        "Creates unique images from your text prompts.\n"
+        "**NO API KEYS NEEDED!**\n\n"
         "✨ **Features:**\n"
         "• 10+ Art Styles\n"
         "• 5 Image Sizes\n"
-        "• No API Key Required!\n"
-        "• Free to use\n"
+        "• 100% Free\n"
+        "• No API Required\n"
         "• Usage Statistics\n\n"
         "🔒 **Privacy:**\n"
-        "No images or data are stored permanently.\n\n"
+        "No data is stored permanently.\n\n"
         "⭐ Made with ❤️ for Telegram"
     )
     await message.reply(about, parse_mode="Markdown")
@@ -611,26 +663,24 @@ async def handle_prompt(message: Message, state: FSMContext):
     
     size = IMAGE_SIZES.get(settings["size"], IMAGE_SIZES["square"])
     style = ART_STYLES.get(settings["style"], ART_STYLES["realistic"])
-    negative = NEGATIVE_PROMPTS.get(settings["negative"], NEGATIVE_PROMPTS["none"])
     
     # Send processing message
     processing = await message.reply(
-        f"🎨 **Generating your image...**\n\n"
+        f"🎨 **Creating your image...**\n\n"
         f"📝 Prompt: {prompt[:150]}{'...' if len(prompt) > 150 else ''}\n"
         f"📐 Size: {size['label']}\n"
         f"🎨 Style: {style['label']}\n\n"
-        f"⏳ Please wait 10-30 seconds...",
+        f"⏳ Please wait...",
         parse_mode="Markdown"
     )
     
     try:
-        # Generate image (NO API KEY REQUIRED!)
-        image_data = await generate_image_free(
+        # Generate image (NO API REQUIRED!)
+        image_data = generate_image_from_prompt(
             prompt=prompt,
             width=size["width"],
             height=size["height"],
-            style=settings["style"],
-            negative=negative["prompt"]
+            style=settings["style"]
         )
         
         if image_data and len(image_data) > 1000:
@@ -649,12 +699,12 @@ async def handle_prompt(message: Message, state: FSMContext):
             await message.reply_photo(
                 photo=input_file,
                 caption=(
-                    f"🎨 **Image Generated!**\n\n"
+                    f"🎨 **Image Created!**\n\n"
                     f"📝 Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}\n"
                     f"📐 Size: {size['label']}\n"
                     f"🎨 Style: {style['label']}\n"
                     f"📊 Size: {format_size(len(image_data))}\n\n"
-                    f"🔄 Send a new prompt to generate again!"
+                    f"🔄 Send a new prompt to create another!"
                 ),
                 parse_mode="Markdown",
                 reply_markup=generate_options_keyboard()
@@ -663,36 +713,20 @@ async def handle_prompt(message: Message, state: FSMContext):
             await processing.delete()
             
         else:
-            # Something went wrong
-            data["history"].append({
-                "prompt": prompt,
-                "success": False,
-                "timestamp": datetime.now().isoformat()
-            })
-            
             await message.reply(
                 "⚠️ **Generation Failed**\n\n"
-                "I couldn't generate an image right now.\n\n"
+                "I couldn't create an image right now.\n\n"
                 "💡 **Tips:**\n"
                 "• Try a different prompt\n"
-                "• Wait a few seconds and retry\n"
-                "• Use a simpler description\n\n"
-                "🔄 Tap Retry to try again:",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardBuilder().row(
-                    InlineKeyboardButton(text="🔄 Retry", callback_data="retry_generate"),
-                    InlineKeyboardButton(text="🏠 Menu", callback_data="back_menu")
-                ).as_markup()
+                "• Use simpler words\n"
+                "• Try again in a moment",
+                parse_mode="Markdown"
             )
-            
             await processing.delete()
             
     except Exception as e:
         logger.error(f"❌ Error: {str(e)}")
-        await message.reply(
-            "❌ **Error**\n\n"
-            "Something went wrong. Please try again later."
-        )
+        await message.reply("❌ Something went wrong. Please try again.")
         await processing.delete()
     
     await state.clear()
@@ -768,23 +802,9 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
         )
         return
         
-    elif action == "change_negative":
-        await callback.message.edit_text(
-            "🚫 **Select Negative Prompt**\n\n"
-            "Choose what to avoid in images:",
-            parse_mode="Markdown",
-            reply_markup=negative_keyboard()
-        )
-        return
-        
     elif action == "reset_settings":
-        data["settings"] = {
-            "size": "square",
-            "style": "realistic",
-            "negative": "none",
-            "total_generated": data["settings"]["total_generated"],
-            "last_generated": data["settings"]["last_generated"]
-        }
+        data["settings"]["size"] = "square"
+        data["settings"]["style"] = "realistic"
         await callback.message.edit_text(
             "✅ **Settings Reset!**\n\n"
             "All settings have been reset to default.",
@@ -827,28 +847,12 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
             )
         return
     
-    # Negative Selection
-    elif action.startswith("negative_"):
-        negative_id = action.replace("negative_", "")
-        if negative_id in NEGATIVE_PROMPTS:
-            settings["negative"] = negative_id
-            negative = NEGATIVE_PROMPTS[negative_id]
-            await callback.message.edit_text(
-                f"✅ **Negative Updated!**\n\n"
-                f"New negative: {negative['label']}",
-                parse_mode="Markdown",
-                reply_markup=InlineKeyboardBuilder().row(
-                    InlineKeyboardButton(text="🔙 Back", callback_data="back_settings")
-                ).as_markup()
-            )
-        return
-    
     # Ideas
     elif action.startswith("idea_"):
         prompt = action.replace("idea_", "")
         if prompt:
             await callback.message.edit_text(
-                f"🎨 **Generating your idea...**\n\n"
+                f"🎨 **Creating your image...**\n\n"
                 f"📝 Prompt: {prompt}\n"
                 f"⏳ Please wait...",
                 parse_mode="Markdown"
@@ -856,14 +860,12 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
             
             size = IMAGE_SIZES.get(settings["size"], IMAGE_SIZES["square"])
             style = ART_STYLES.get(settings["style"], ART_STYLES["realistic"])
-            negative = NEGATIVE_PROMPTS.get(settings["negative"], NEGATIVE_PROMPTS["none"])
             
-            image_data = await generate_image_free(
+            image_data = generate_image_from_prompt(
                 prompt=prompt,
                 width=size["width"],
                 height=size["height"],
-                style=settings["style"],
-                negative=negative["prompt"]
+                style=settings["style"]
             )
             
             if image_data and len(image_data) > 1000:
@@ -872,7 +874,7 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.message.reply_photo(
                     photo=input_file,
                     caption=(
-                        f"🎨 **Image Generated!**\n\n"
+                        f"🎨 **Image Created!**\n\n"
                         f"📝 Prompt: {prompt}\n"
                         f"📐 Size: {size['label']}\n"
                         f"🎨 Style: {style['label']}"
@@ -886,14 +888,10 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
                     ).as_markup()
                 )
             else:
-                await callback.message.reply("⚠️ Failed to generate. Please try again.")
+                await callback.message.reply("⚠️ Failed to create image. Please try again.")
         return
     
-    # Retry / Regenerate
-    elif action == "retry_generate":
-        await cmd_generate(callback.message, state)
-        return
-        
+    # Regenerate
     elif action == "regenerate":
         if data["history"]:
             last = data["history"][-1]
@@ -911,20 +909,6 @@ async def handle_other(message: Message):
         ).as_markup()
     )
 
-# ==================== ERROR HANDLER ====================
-
-@dp.errors()
-async def error_handler(update, exception):
-    logger.error(f"❌ Error: {str(exception)}")
-    if hasattr(update, 'message') and update.message:
-        try:
-            await update.message.reply(
-                "❌ **Error**\n\n"
-                "Something went wrong. Please try again."
-            )
-        except:
-            pass
-
 # ==================== MAIN ====================
 
 async def main():
@@ -932,7 +916,7 @@ async def main():
         logger.info("=" * 60)
         logger.info(f"🎨 {BOT_NAME} v{BOT_VERSION}")
         logger.info(f"🤖 Username: @{BOT_USERNAME}")
-        logger.info(f"🔑 API Key: {'✅ Configured' if HUGGINGFACE_API_KEY else '🆓 Free Mode'}")
+        logger.info(f"📦 Mode: NO API KEY NEEDED")
         logger.info("=" * 60)
         
         await bot.delete_webhook(drop_pending_updates=True)
@@ -945,6 +929,7 @@ async def main():
         await bot.session.close()
 
 if __name__ == "__main__":
+    import asyncio
     try:
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
