@@ -1,17 +1,17 @@
 """
-🎨 Pixel Craft Bot - AI Image Generator
-Creates images using Python's PIL library - NO API KEY NEEDED!
-Generates beautiful images with your text prompts
+🎨 Pixel Craft Bot - Professional Image Generator
+Creates ACTUAL images with scenes, objects, and landscapes
+NO API KEY NEEDED! Uses Python's PIL to draw everything
 """
 
 import os
 import io
 import logging
 import random
-import textwrap
+import math
 from datetime import datetime
-from typing import Dict, Optional
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from typing import Dict, List, Tuple, Optional
+from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance, ImageChops
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -44,7 +44,7 @@ if not BOT_TOKEN:
 
 BOT_NAME = "Pixel Craft Bot"
 BOT_USERNAME = "pixel_craft_bot"
-BOT_VERSION = "2.0.0"
+BOT_VERSION = "3.0.0"
 
 storage = MemoryStorage()
 bot = Bot(token=BOT_TOKEN)
@@ -52,21 +52,6 @@ dp = Dispatcher(storage=storage)
 
 # ==================== CONSTANTS ====================
 
-# Color themes for different moods
-COLOR_THEMES = {
-    "sunset": [(255, 100, 50), (255, 200, 100), (200, 50, 80)],
-    "ocean": [(0, 50, 100), (50, 150, 200), (100, 200, 255)],
-    "forest": [(20, 80, 20), (50, 150, 50), (100, 200, 100)],
-    "cyberpunk": [(100, 0, 150), (255, 0, 200), (0, 200, 255)],
-    "warm": [(255, 200, 100), (255, 150, 50), (200, 100, 50)],
-    "cool": [(100, 150, 255), (50, 100, 200), (0, 50, 150)],
-    "pastel": [(255, 200, 220), (200, 220, 255), (220, 255, 200)],
-    "neon": [(255, 0, 100), (0, 255, 200), (200, 0, 255)],
-    "nature": [(50, 150, 50), (100, 200, 100), (150, 100, 50)],
-    "space": [(10, 10, 50), (50, 0, 100), (100, 0, 200)],
-}
-
-# Image sizes
 IMAGE_SIZES = {
     "square": {"width": 512, "height": 512, "label": "🟦 Square (512x512)"},
     "portrait": {"width": 384, "height": 512, "label": "📱 Portrait (384x512)"},
@@ -75,7 +60,6 @@ IMAGE_SIZES = {
     "hd": {"width": 1024, "height": 768, "label": "📷 HD (1024x768)"},
 }
 
-# Art styles
 ART_STYLES = {
     "realistic": {"label": "📷 Realistic", "style": "realistic"},
     "anime": {"label": "🎨 Anime", "style": "anime"},
@@ -83,10 +67,8 @@ ART_STYLES = {
     "oil": {"label": "🖌️ Oil Painting", "style": "oil"},
     "watercolor": {"label": "💧 Watercolor", "style": "watercolor"},
     "sketch": {"label": "✒️ Sketch", "style": "sketch"},
-    "3d": {"label": "🎮 3D Render", "style": "3d"},
     "cyberpunk": {"label": "💜 Cyberpunk", "style": "cyberpunk"},
     "fantasy": {"label": "🧙 Fantasy", "style": "fantasy"},
-    "minimalist": {"label": "⬜ Minimalist", "style": "minimalist"},
 }
 
 # ==================== USER DATA ====================
@@ -155,16 +137,18 @@ def style_keyboard() -> InlineKeyboardMarkup:
 def ideas_keyboard() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     ideas = [
-        ("🌅 Sunset", "golden sunset over ocean with dramatic clouds"),
-        ("🐱 Cat", "cute fluffy cat in a garden with flowers"),
-        ("🚀 Space", "futuristic rocket launching into space"),
-        ("🏰 Castle", "medieval castle on a mountain at sunrise"),
-        ("🌌 Galaxy", "colorful spiral galaxy with stars and nebula"),
-        ("🌸 Garden", "beautiful japanese garden with cherry blossoms"),
-        ("🏙️ Cyberpunk", "cyberpunk city with neon lights at night"),
-        ("🧙 Wizard", "ancient wizard casting a magic spell"),
-        ("🐉 Dragon", "majestic dragon flying over mountains"),
-        ("🌊 Wave", "massive ocean wave with dramatic lighting"),
+        ("🌅 Sunset Beach", "sunset over ocean with palm trees"),
+        ("🐱 Cute Cat", "cute cat sitting in a garden"),
+        ("🚀 Space Launch", "rocket launching into space"),
+        ("🏰 Fantasy Castle", "magical castle on a mountain"),
+        ("🌌 Galaxy", "beautiful spiral galaxy with stars"),
+        ("🌸 Cherry Blossom", "cherry blossom trees in spring"),
+        ("🏙️ Cyber City", "cyberpunk city with neon lights"),
+        ("🧙 Wizard Tower", "wizard tower with magic aura"),
+        ("🐉 Dragon", "dragon flying over mountains"),
+        ("🌊 Ocean Wave", "huge wave with dramatic lighting"),
+        ("🌲 Forest", "mysterious forest with light rays"),
+        ("🏔️ Mountain", "snowy mountain with clouds"),
     ]
     for idea_text, idea_prompt in ideas[:8]:
         builder.row(InlineKeyboardButton(
@@ -186,46 +170,526 @@ def generate_options_keyboard() -> InlineKeyboardMarkup:
     )
     return builder.as_markup()
 
-# ==================== IMAGE GENERATION ENGINE ====================
+# ==================== DRAWING FUNCTIONS ====================
 
-def generate_image_from_prompt(
-    prompt: str,
-    width: int = 512,
-    height: int = 512,
-    style: str = "realistic"
-) -> bytes:
+def draw_sky(draw: ImageDraw.Draw, width: int, height: int, colors: List[Tuple[int, int, int]]):
+    """Draw a gradient sky"""
+    for y in range(height // 2):
+        ratio = y / (height // 2)
+        r = int(colors[0][0] + (colors[1][0] - colors[0][0]) * ratio)
+        g = int(colors[0][1] + (colors[1][1] - colors[0][1]) * ratio)
+        b = int(colors[0][2] + (colors[1][2] - colors[0][2]) * ratio)
+        draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+
+def draw_ground(draw: ImageDraw.Draw, width: int, height: int, colors: List[Tuple[int, int, int]]):
+    """Draw ground/landscape"""
+    ground_y = height // 2 + random.randint(-20, 20)
+    for y in range(ground_y, height):
+        ratio = (y - ground_y) / (height - ground_y)
+        r = int(colors[0][0] + (colors[1][0] - colors[0][0]) * ratio)
+        g = int(colors[0][1] + (colors[1][1] - colors[0][1]) * ratio)
+        b = int(colors[0][2] + (colors[1][2] - colors[0][2]) * ratio)
+        draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+    return ground_y
+
+def draw_sun(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a sun"""
+    sun_x = random.randint(width // 4, width * 3 // 4)
+    sun_y = random.randint(height // 6, height // 3)
+    sun_radius = random.randint(30, 60)
+    
+    # Glow
+    for i in range(5, 0, -1):
+        r = sun_radius + i * 15
+        alpha = int(50 / i)
+        draw.ellipse([sun_x - r, sun_y - r, sun_x + r, sun_y + r], 
+                    fill=(255, 200, 50, alpha))
+    
+    # Main sun
+    draw.ellipse([sun_x - sun_radius, sun_y - sun_radius, 
+                  sun_x + sun_radius, sun_y + sun_radius], 
+                fill=(255, 220, 80))
+    draw.ellipse([sun_x - sun_radius//2, sun_y - sun_radius//2, 
+                  sun_x + sun_radius//2, sun_y + sun_radius//2], 
+                fill=(255, 240, 150))
+    return sun_x, sun_y
+
+def draw_mountain(draw: ImageDraw.Draw, width: int, height: int, ground_y: int, 
+                  x: int, size: float, color: Tuple[int, int, int]):
+    """Draw a mountain"""
+    points = [
+        (x - int(80 * size), ground_y),
+        (x, int(ground_y - 120 * size)),
+        (x + int(80 * size), ground_y)
+    ]
+    draw.polygon(points, fill=color)
+    
+    # Snow cap
+    if size > 1.2:
+        snow_points = [
+            (x - int(20 * size), int(ground_y - 90 * size)),
+            (x, int(ground_y - 120 * size)),
+            (x + int(20 * size), int(ground_y - 90 * size))
+        ]
+        draw.polygon(snow_points, fill=(255, 255, 255, 200))
+
+def draw_tree(draw: ImageDraw.Draw, x: int, y: int, height: int, 
+              color: Tuple[int, int, int], style: str = "realistic"):
+    """Draw a tree"""
+    # Trunk
+    trunk_height = height // 3
+    draw.rectangle([x - 3, y - trunk_height, x + 3, y], fill=(80, 50, 20))
+    
+    # Canopy
+    if style == "anime":
+        # Round anime-style tree
+        for i in range(3):
+            radius = height // 3 - i * 10
+            draw.ellipse([x - radius, y - trunk_height - i * 20 - radius, 
+                          x + radius, y - trunk_height - i * 20 + radius], 
+                        fill=(color[0] - i * 20, color[1] - i * 10, color[2] - i * 10))
+    else:
+        # Natural tree
+        points = [
+            (x, y - height),
+            (x - height//2, y - trunk_height),
+            (x + height//2, y - trunk_height),
+            (x, y - trunk_height + 10)
+        ]
+        draw.polygon(points, fill=color)
+
+def draw_cloud(draw: ImageDraw.Draw, x: int, y: int, size: int):
+    """Draw a cloud"""
+    draw.ellipse([x, y, x + size, y + size//2], fill=(255, 255, 255, 180))
+    draw.ellipse([x - size//3, y + 5, x + size//3, y + size//2 + 5], 
+                fill=(255, 255, 255, 150))
+    draw.ellipse([x + size//3, y + 5, x + size, y + size//2 + 5], 
+                fill=(255, 255, 255, 150))
+
+def draw_stars(draw: ImageDraw.Draw, width: int, height: int, count: int = 50):
+    """Draw stars in the sky"""
+    for _ in range(count):
+        x = random.randint(0, width)
+        y = random.randint(0, height // 2)
+        size = random.randint(1, 3)
+        brightness = random.randint(150, 255)
+        draw.ellipse([x, y, x + size, y + size], 
+                    fill=(brightness, brightness, brightness, 200))
+
+def draw_moon(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a moon"""
+    moon_x = random.randint(width // 4, width * 3 // 4)
+    moon_y = random.randint(height // 8, height // 3)
+    moon_r = random.randint(25, 50)
+    
+    # Glow
+    for i in range(3, 0, -1):
+        r = moon_r + i * 20
+        draw.ellipse([moon_x - r, moon_y - r, moon_x + r, moon_y + r], 
+                    fill=(255, 255, 200, 20))
+    
+    draw.ellipse([moon_x - moon_r, moon_y - moon_r, 
+                  moon_x + moon_r, moon_y + moon_r], 
+                fill=(240, 240, 220))
+    draw.ellipse([moon_x - moon_r//2, moon_y - moon_r//2, 
+                  moon_x + moon_r//2, moon_y + moon_r//2], 
+                fill=(255, 255, 240))
+
+def draw_water(draw: ImageDraw.Draw, width: int, height: int, ground_y: int):
+    """Draw water/ocean"""
+    for y in range(ground_y, height):
+        ratio = (y - ground_y) / (height - ground_y)
+        r = int(20 + (50 * ratio))
+        g = int(80 + (100 * ratio))
+        b = int(150 + (80 * ratio))
+        draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+    
+    # Waves
+    for i in range(3):
+        y = ground_y + 20 + i * 30
+        points = []
+        for x in range(0, width, 3):
+            y_offset = int(10 * math.sin(x / 30 + i * 2))
+            points.append((x, y + y_offset))
+        draw.line(points, fill=(255, 255, 255, 100), width=2)
+
+def draw_flowers(draw: ImageDraw.Draw, width: int, height: int, ground_y: int, count: int = 15):
+    """Draw flowers on the ground"""
+    colors = [(255, 100, 150), (255, 200, 100), (200, 100, 255), 
+              (255, 100, 100), (255, 150, 200)]
+    for _ in range(count):
+        x = random.randint(20, width - 20)
+        y = random.randint(ground_y + 20, height - 20)
+        size = random.randint(5, 10)
+        color = random.choice(colors)
+        draw.ellipse([x - size, y - size, x + size, y + size], fill=color)
+        draw.ellipse([x - size//2, y - size - size//2, x + size//2, y - size + size//2], 
+                    fill=color)
+
+def draw_birds(draw: ImageDraw.Draw, width: int, height: int, count: int = 3):
+    """Draw birds in the sky"""
+    for _ in range(count):
+        x = random.randint(50, width - 50)
+        y = random.randint(30, height // 3)
+        size = random.randint(8, 15)
+        # V shape
+        points = [(x, y), (x - size, y - size//2), (x - size//2, y - size//4), 
+                  (x, y), (x + size//2, y - size//4), (x + size, y - size//2)]
+        draw.line(points, fill=(30, 30, 30), width=2)
+
+def draw_castle(draw: ImageDraw.Draw, x: int, y: int, size: int):
+    """Draw a castle"""
+    # Base
+    draw.rectangle([x - size, y - size//2, x + size, y], fill=(120, 110, 100))
+    # Towers
+    for i in [-size//2, size//2]:
+        draw.rectangle([x + i - 15, y - size, x + i + 15, y - size//2], 
+                      fill=(130, 120, 110))
+        # Tower top
+        draw.polygon([(x + i - 20, y - size), (x + i, y - size - 30), 
+                      (x + i + 20, y - size)], fill=(150, 140, 130))
+        # Windows
+        draw.rectangle([x + i - 5, y - size + 20, x + i + 5, y - size + 40], 
+                      fill=(255, 200, 100))
+    # Gate
+    draw.rectangle([x - 20, y - 30, x + 20, y], fill=(50, 40, 30))
+    draw.arc([x - 20, y - 30, x + 20, y], 180, 0, fill=(50, 40, 30))
+
+def draw_dragon(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a simple dragon"""
+    cx = width // 2
+    cy = height // 2 - 50
+    
+    # Body
+    points = [(cx - 80, cy + 40), (cx, cy - 60), (cx + 80, cy + 40), 
+              (cx + 40, cy + 60), (cx - 40, cy + 60)]
+    draw.polygon(points, fill=(50, 150, 50))
+    
+    # Wings
+    wing_points = [(cx - 60, cy - 20), (cx - 120, cy - 100), 
+                   (cx - 80, cy - 60), (cx - 40, cy - 40)]
+    draw.polygon(wing_points, fill=(80, 200, 80, 150))
+    wing_points2 = [(cx + 60, cy - 20), (cx + 120, cy - 100), 
+                    (cx + 80, cy - 60), (cx + 40, cy - 40)]
+    draw.polygon(wing_points2, fill=(80, 200, 80, 150))
+    
+    # Head
+    draw.ellipse([cx - 30, cy - 80, cx + 30, cy - 30], fill=(50, 150, 50))
+    # Eyes
+    draw.ellipse([cx - 20, cy - 70, cx - 10, cy - 60], fill=(255, 200, 50))
+    draw.ellipse([cx + 10, cy - 70, cx + 20, cy - 60], fill=(255, 200, 50))
+    # Fire
+    fire_points = [(cx - 10, cy - 30), (cx - 30, cy + 20), 
+                   (cx, cy + 10), (cx + 30, cy + 20), (cx + 10, cy - 30)]
+    draw.polygon(fire_points, fill=(255, 100, 0, 150))
+    draw.polygon([(cx - 5, cy - 20), (cx - 15, cy), 
+                  (cx, cy - 5), (cx + 15, cy), (cx + 5, cy - 20)], 
+                fill=(255, 200, 0, 150))
+
+def draw_rocket(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a rocket launching"""
+    cx = width // 2
+    cy = height // 2
+    
+    # Body
+    draw.rectangle([cx - 20, cy - 60, cx + 20, cy + 20], fill=(200, 200, 220))
+    # Nose cone
+    draw.polygon([(cx - 20, cy - 60), (cx, cy - 100), (cx + 20, cy - 60)], 
+                fill=(255, 100, 100))
+    # Fins
+    draw.polygon([(cx - 40, cy + 10), (cx - 20, cy), (cx - 20, cy + 20)], 
+                fill=(200, 200, 220))
+    draw.polygon([(cx + 40, cy + 10), (cx + 20, cy), (cx + 20, cy + 20)], 
+                fill=(200, 200, 220))
+    # Window
+    draw.ellipse([cx - 12, cy - 30, cx + 12, cy - 10], fill=(100, 200, 255))
+    # Flames
+    flame_points = [(cx - 15, cy + 20), (cx, cy + 60), (cx + 15, cy + 20)]
+    draw.polygon(flame_points, fill=(255, 150, 0, 200))
+    draw.polygon([(cx - 8, cy + 25), (cx, cy + 50), (cx + 8, cy + 25)], 
+                fill=(255, 255, 100, 200))
+
+def draw_tower(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a wizard tower"""
+    cx = width // 2
+    cy = height // 2
+    
+    # Tower body
+    draw.rectangle([cx - 40, cy - 60, cx + 40, cy + 40], fill=(100, 80, 60))
+    # Tower top
+    draw.polygon([(cx - 50, cy - 60), (cx, cy - 120), (cx + 50, cy - 60)], 
+                fill=(120, 100, 80))
+    # Windows
+    draw.ellipse([cx - 15, cy - 30, cx + 15, cy], fill=(255, 200, 50))
+    # Magic aura
+    for i in range(3, 0, -1):
+        r = 60 + i * 20
+        draw.ellipse([cx - r, cy - r, cx + r, cy + r], 
+                    fill=(150, 50, 200, 20))
+    # Star on top
+    star_points = [
+        (cx, cy - 140), (cx + 10, cy - 125), (cx + 25, cy - 125),
+        (cx + 15, cy - 115), (cx + 20, cy - 100), (cx, cy - 110),
+        (cx - 20, cy - 100), (cx - 15, cy - 115), (cx - 25, cy - 125),
+        (cx - 10, cy - 125)
+    ]
+    draw.polygon(star_points, fill=(255, 200, 50))
+
+def draw_wave(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a giant wave"""
+    # Water background
+    for y in range(height):
+        r = int(10 + (30 * y / height))
+        g = int(50 + (80 * y / height))
+        b = int(100 + (100 * y / height))
+        draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+    
+    # Wave
+    points = []
+    for x in range(width):
+        y = height//2 + int(100 * math.sin(x / 20 + 1.5))
+        points.append((x, y))
+    
+    # Fill wave
+    wave_points = points + [(width, height), (0, height)]
+    draw.polygon(wave_points, fill=(30, 100, 200, 180))
+    
+    # Wave curve
+    draw.line(points, fill=(255, 255, 255, 150), width=3)
+    
+    # Wave curl
+    curl_x = width // 2 + 80
+    curl_y = height//2 + 100
+    draw.arc([curl_x - 50, curl_y - 50, curl_x + 50, curl_y + 50], 
+             0, 180, fill=(255, 255, 255, 150), width=3)
+    
+    # Spray
+    for _ in range(20):
+        x = curl_x + random.randint(-30, 30)
+        y = curl_y - random.randint(10, 40)
+        size = random.randint(2, 5)
+        draw.ellipse([x, y, x + size, y + size], fill=(255, 255, 255, 150))
+
+def draw_forest(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a magical forest"""
+    # Ground
+    ground_y = height * 2 // 3
+    for y in range(ground_y, height):
+        r = int(30 + (20 * (y - ground_y) / (height - ground_y)))
+        g = int(80 + (40 * (y - ground_y) / (height - ground_y)))
+        b = int(30 + (20 * (y - ground_y) / (height - ground_y)))
+        draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+    
+    # Trees
+    for i in range(8):
+        x = random.randint(30, width - 30)
+        tree_height = random.randint(60, 120)
+        draw_tree(draw, x, ground_y, tree_height, 
+                  (random.randint(40, 80), random.randint(120, 180), 
+                   random.randint(30, 60)))
+    
+    # Light rays
+    for x in range(0, width, 20):
+        y_start = random.randint(0, 50)
+        draw.line([(x, y_start), (x + random.randint(-10, 10), ground_y)], 
+                 fill=(255, 255, 200, 30), width=3)
+    
+    # Magic particles
+    for _ in range(30):
+        x = random.randint(0, width)
+        y = random.randint(0, ground_y)
+        size = random.randint(2, 4)
+        draw.ellipse([x, y, x + size, y + size], 
+                    fill=(255, 255, 200, 150))
+
+# ==================== MAIN GENERATION ENGINE ====================
+
+def generate_image(prompt: str, width: int, height: int, style: str) -> bytes:
     """
-    Generate a beautiful image using Python's PIL library
-    NO API KEY NEEDED! Creates images based on the prompt text
+    Main image generation function - NO API REQUIRED!
+    Draws actual scenes based on prompt
     """
     try:
-        # Create base image
+        # Create image
         img = Image.new('RGB', (width, height))
         draw = ImageDraw.Draw(img)
         
-        # Select color theme based on prompt content
-        theme = select_color_theme(prompt)
-        colors = COLOR_THEMES.get(theme, COLOR_THEMES["warm"])
+        prompt_lower = prompt.lower()
         
-        # Create gradient background
-        for y in range(height):
-            # Interpolate between colors
-            ratio = y / height
-            r = int(colors[0][0] + (colors[1][0] - colors[0][0]) * ratio)
-            g = int(colors[0][1] + (colors[1][1] - colors[0][1]) * ratio)
-            b = int(colors[0][2] + (colors[1][2] - colors[0][2]) * ratio)
-            draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
+        # ============ SCENE SELECTION ============
         
-        # Add decorative elements based on prompt
-        add_decorative_elements(img, draw, width, height, prompt)
+        if any(word in prompt_lower for word in ["sunset", "sunrise", "evening", "golden", "beach"]):
+            # Sunset scene
+            draw_sky(draw, width, height, [(200, 80, 50), (255, 150, 80)])
+            ground_y = draw_ground(draw, width, height, [(100, 80, 60), (60, 40, 30)])
+            draw_sun(draw, width, height)
+            
+            if any(word in prompt_lower for word in ["ocean", "sea", "water", "wave"]):
+                draw_water(draw, width, height, ground_y)
+            else:
+                for _ in range(2):
+                    draw_cloud(draw, random.randint(0, width), random.randint(20, 100), 
+                              random.randint(60, 120))
+            
+            if "palm" in prompt_lower or "tree" in prompt_lower:
+                draw_tree(draw, random.randint(50, 150), ground_y, 80, (50, 150, 50))
+                draw_tree(draw, random.randint(width - 150, width - 50), ground_y, 90, (50, 150, 50))
+            
+            draw_birds(draw, width, height)
+            draw_flowers(draw, width, height, ground_y, 10)
+            
+        elif any(word in prompt_lower for word in ["cat", "kitten", "animal"]):
+            # Cat scene
+            draw_sky(draw, width, height, [(100, 150, 255), (150, 200, 255)])
+            ground_y = draw_ground(draw, width, height, [(100, 180, 100), (50, 120, 50)])
+            
+            for _ in range(2):
+                draw_cloud(draw, random.randint(0, width), random.randint(20, 80), 
+                          random.randint(50, 100))
+            
+            draw_flowers(draw, width, height, ground_y, 12)
+            
+            # Draw cat
+            cx = width // 2
+            cy = ground_y - 40
+            # Body
+            draw.ellipse([cx - 35, cy - 20, cx + 35, cy + 30], fill=(200, 150, 100))
+            # Head
+            draw.ellipse([cx - 25, cy - 50, cx + 25, cy - 10], fill=(200, 150, 100))
+            # Ears
+            draw.polygon([(cx - 25, cy - 50), (cx - 15, cy - 80), (cx - 5, cy - 50)], 
+                        fill=(200, 150, 100))
+            draw.polygon([(cx + 5, cy - 50), (cx + 15, cy - 80), (cx + 25, cy - 50)], 
+                        fill=(200, 150, 100))
+            # Eyes
+            draw.ellipse([cx - 15, cy - 45, cx - 8, cy - 38], fill=(100, 200, 100))
+            draw.ellipse([cx + 8, cy - 45, cx + 15, cy - 38], fill=(100, 200, 100))
+            draw.ellipse([cx - 12, cy - 42, cx - 11, cy - 41], fill=(0, 0, 0))
+            draw.ellipse([cx + 11, cy - 42, cx + 12, cy - 41], fill=(0, 0, 0))
+            # Nose
+            draw.polygon([(cx, cy - 35), (cx - 3, cy - 30), (cx + 3, cy - 30)], 
+                        fill=(255, 100, 100))
+            # Tail
+            draw.line([(cx + 35, cy + 10), (cx + 60, cy - 20)], fill=(200, 150, 100), width=5)
+            
+        elif any(word in prompt_lower for word in ["space", "rocket", "launch", "galaxy"]):
+            # Space scene
+            draw_sky(draw, width, height, [(10, 10, 40), (20, 10, 60)])
+            draw_stars(draw, width, height, 80)
+            draw_galaxy(draw, width, height)
+            draw_rocket(draw, width, height)
+            
+        elif any(word in prompt_lower for word in ["castle", "fantasy", "magic", "wizard"]):
+            # Fantasy scene
+            draw_sky(draw, width, height, [(100, 50, 150), (200, 100, 200)])
+            ground_y = draw_ground(draw, width, height, [(100, 80, 60), (50, 40, 30)])
+            draw_tower(draw, width, height)
+            draw_flowers(draw, width, height, ground_y, 8)
+            draw_stars(draw, width, height, 30)
+            
+        elif any(word in prompt_lower for word in ["dragon", "fire", "fly"]):
+            # Dragon scene
+            draw_sky(draw, width, height, [(200, 100, 50), (255, 150, 100)])
+            draw_ground(draw, width, height, [(100, 80, 60), (60, 40, 30)])
+            for _ in range(2):
+                draw_mountain(draw, width, height, height * 3 // 4, 
+                            random.randint(100, width - 100), 
+                            random.uniform(0.8, 1.5),
+                            (80, 70, 60))
+            draw_dragon(draw, width, height)
+            
+        elif any(word in prompt_lower for word in ["city", "cyberpunk", "neon", "future"]):
+            # Cyberpunk city
+            draw_sky(draw, width, height, [(10, 10, 30), (50, 0, 100)])
+            draw_ground(draw, width, height, [(30, 30, 50), (10, 10, 30)])
+            
+            # Buildings
+            for i in range(5):
+                x = 50 + i * 100 + random.randint(-20, 20)
+                bw = random.randint(30, 60)
+                bh = random.randint(80, 180)
+                draw.rectangle([x, height - bh - 50, x + bw, height - 50], 
+                             fill=(80 + random.randint(0, 40), 
+                                   80 + random.randint(0, 40), 
+                                   100 + random.randint(0, 40)))
+                # Windows
+                for wx in range(x + 5, x + bw - 5, 15):
+                    for wy in range(height - bh - 40, height - 60, 15):
+                        if random.random() > 0.3:
+                            color = random.choice([(255, 200, 50), (255, 100, 255), 
+                                                  (100, 255, 255), (255, 255, 255)])
+                            draw.rectangle([wx, wy, wx + 8, wy + 8], fill=color)
+            
+            # Neon signs
+            for i in range(3):
+                x = random.randint(50, width - 50)
+                y = random.randint(100, height - 80)
+                draw.rectangle([x, y, x + random.randint(40, 80), y + 15], 
+                             fill=random.choice([(255, 0, 200), (0, 200, 255), (255, 200, 0)]))
+            
+            draw_stars(draw, width, height, 20)
+            
+        else:
+            # Default - Beautiful landscape
+            draw_sky(draw, width, height, [(135, 206, 235), (200, 230, 255)])
+            ground_y = draw_ground(draw, width, height, [(100, 180, 100), (50, 120, 50)])
+            
+            # Mountains
+            for _ in range(3):
+                draw_mountain(draw, width, height, ground_y, 
+                            random.randint(100, width - 100), 
+                            random.uniform(0.8, 1.5),
+                            (80 + random.randint(0, 40), 70 + random.randint(0, 30), 60))
+            
+            for _ in range(3):
+                draw_cloud(draw, random.randint(0, width), random.randint(20, 80), 
+                          random.randint(60, 120))
+            
+            for _ in range(5):
+                draw_tree(draw, random.randint(30, width - 30), ground_y, 
+                         random.randint(50, 100), 
+                         (random.randint(40, 80), random.randint(120, 180), 
+                          random.randint(30, 60)))
+            
+            draw_flowers(draw, width, height, ground_y, 15)
+            draw_birds(draw, width, height, 5)
         
-        # Add text from prompt
-        add_text_to_image(img, draw, width, height, prompt)
+        # ============ APPLY STYLE EFFECTS ============
         
-        # Apply style effects
-        img = apply_style_effects(img, style)
+        if style == "oil":
+            img = img.filter(ImageFilter.SMOOTH_MORE)
+            img = img.filter(ImageFilter.EDGE_ENHANCE)
+            img = ImageEnhance.Color(img).enhance(1.2)
+            
+        elif style == "watercolor":
+            img = img.filter(ImageFilter.SMOOTH)
+            img = ImageEnhance.Color(img).enhance(0.7)
+            img = ImageEnhance.Brightness(img).enhance(1.1)
+            
+        elif style == "sketch":
+            img = img.filter(ImageFilter.CONTOUR)
+            img = ImageEnhance.Contrast(img).enhance(2.0)
+            
+        elif style == "anime":
+            img = ImageEnhance.Color(img).enhance(1.4)
+            img = ImageEnhance.Contrast(img).enhance(1.1)
+            img = img.filter(ImageFilter.SMOOTH)
+            
+        elif style == "cartoon":
+            img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
+            img = ImageEnhance.Color(img).enhance(1.3)
+            
+        elif style == "cyberpunk":
+            img = ImageEnhance.Color(img).enhance(1.6)
+            img = ImageEnhance.Contrast(img).enhance(1.3)
+            
+        elif style == "fantasy":
+            img = ImageEnhance.Color(img).enhance(1.3)
+            img = img.filter(ImageFilter.SMOOTH)
+            img = ImageEnhance.Brightness(img).enhance(1.1)
+            
+        # ============ CONVERT TO BYTES ============
         
-        # Convert to bytes
         img_bytes = io.BytesIO()
         img.save(img_bytes, format='PNG', optimize=True)
         img_bytes.seek(0)
@@ -235,215 +699,34 @@ def generate_image_from_prompt(
         logger.error(f"❌ Generation error: {str(e)}")
         return create_fallback_image(width, height, prompt)
 
-def select_color_theme(prompt: str) -> str:
-    """Select color theme based on prompt content"""
-    prompt_lower = prompt.lower()
+def draw_galaxy(draw: ImageDraw.Draw, width: int, height: int):
+    """Draw a spiral galaxy"""
+    cx = width // 2
+    cy = height // 2
     
-    themes = {
-        "sunset": ["sunset", "golden", "orange", "red", "warm", "evening"],
-        "ocean": ["ocean", "sea", "water", "wave", "blue", "beach"],
-        "forest": ["forest", "tree", "green", "nature", "wood", "leaf"],
-        "cyberpunk": ["cyberpunk", "neon", "future", "city", "futuristic"],
-        "space": ["space", "star", "galaxy", "cosmic", "universe"],
-        "warm": ["warm", "cozy", "fire", "sun", "gold"],
-        "cool": ["cool", "ice", "snow", "winter", "cold"],
-        "pastel": ["pastel", "soft", "gentle", "delicate", "cute"],
-        "neon": ["neon", "vibrant", "bright", "glow"],
-    }
-    
-    for theme, keywords in themes.items():
-        for keyword in keywords:
-            if keyword in prompt_lower:
-                return theme
-    
-    return "warm"  # Default theme
-
-def add_decorative_elements(img: Image.Image, draw: ImageDraw.Draw, width: int, height: int, prompt: str):
-    """Add decorative elements based on prompt content"""
-    prompt_lower = prompt.lower()
-    random.seed(hash(prompt) % 2**32)
-    
-    # Add stars or sparkles
-    if any(word in prompt_lower for word in ["star", "space", "night", "galaxy", "magic", "sparkle"]):
-        for _ in range(30):
-            x = random.randint(0, width)
-            y = random.randint(0, height)
-            size = random.randint(2, 5)
-            brightness = random.randint(150, 255)
-            draw.ellipse([x, y, x + size, y + size], 
-                        fill=(brightness, brightness, brightness))
-    
-    # Add flowers for garden/nature prompts
-    if any(word in prompt_lower for word in ["flower", "garden", "nature", "spring", "bloom"]):
-        for _ in range(8):
-            x = random.randint(0, width)
-            y = random.randint(0, height)
-            size = random.randint(10, 20)
-            colors = [(255, 100, 150), (255, 200, 100), (200, 100, 255), (255, 100, 100)]
-            color = random.choice(colors)
-            # Draw flower (circle with petals)
-            draw.ellipse([x - size, y - size, x + size, y + size], 
-                        fill=color, outline=(255, 255, 255))
-    
-    # Add water waves for ocean prompts
-    if any(word in prompt_lower for word in ["ocean", "wave", "water", "sea"]):
-        for i in range(3):
-            y = height // 3 + i * 80
-            points = []
-            for x in range(0, width, 5):
-                y_offset = int(15 * ((x / width) * 3.14 * 2) + i * 20)
-                points.append((x, y + y_offset))
-            draw.line(points, fill=(255, 255, 255, 100), width=3)
-    
-    # Add clouds for sky prompts
-    if any(word in prompt_lower for word in ["sky", "cloud", "sunset", "sunrise"]):
-        for _ in range(5):
-            x = random.randint(0, width)
-            y = random.randint(0, height // 2)
-            size = random.randint(30, 80)
-            draw.ellipse([x, y, x + size, y + size//2], 
-                        fill=(255, 255, 255, 100))
-            draw.ellipse([x - size//3, y + 10, x + size//2, y + size//2 + 10], 
-                        fill=(255, 255, 255, 80))
-
-def add_text_to_image(img: Image.Image, draw: ImageDraw.Draw, width: int, height: int, prompt: str):
-    """Add styled text to the image"""
-    try:
-        # Try to use a nicer font
-        font_paths = [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-            "/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf",
-            "/System/Library/Fonts/Helvetica.ttc",
-            "arial.ttf"
-        ]
-        
-        font = None
-        for path in font_paths:
-            try:
-                font = ImageFont.truetype(path, 32)
-                break
-            except:
-                continue
-        
-        if font is None:
-            font = ImageFont.load_default()
-        
-        # Wrap text
-        words = prompt.split()
-        lines = []
-        current_line = []
-        max_width = int(width * 0.85)
-        
-        for word in words:
-            current_line.append(word)
-            test_line = ' '.join(current_line)
-            try:
-                bbox = draw.textbbox((0, 0), test_line, font=font)
-                if bbox[2] - bbox[0] > max_width:
-                    if len(current_line) > 1:
-                        current_line.pop()
-                        lines.append(' '.join(current_line))
-                        current_line = [word]
-                    else:
-                        lines.append(test_line)
-                        current_line = []
-            except:
-                lines.append(test_line)
-                current_line = []
-        
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        # Limit to 6 lines
-        lines = lines[:6]
-        
-        # Calculate total height
-        total_height = 0
-        for line in lines:
-            try:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                total_height += bbox[3] - bbox[1] + 10
-            except:
-                total_height += 50
-        
-        # Draw text with shadow effect
-        y_offset = (height - total_height) // 2
-        for line in lines:
-            try:
-                bbox = draw.textbbox((0, 0), line, font=font)
-                x = (width - (bbox[2] - bbox[0])) // 2
-                
-                # Shadow
-                draw.text((x + 2, y_offset + 2), line, fill=(0, 0, 0, 150), font=font)
-                # Main text
-                draw.text((x, y_offset), line, fill=(255, 255, 255), font=font)
-                
-                y_offset += (bbox[3] - bbox[1]) + 10
-            except:
-                pass
-        
-        # Add small footer
-        try:
-            small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
-            footer = "🎨 Pixel Craft Bot"
-            bbox = draw.textbbox((0, 0), footer, font=small_font)
-            x = (width - (bbox[2] - bbox[0])) // 2
-            draw.text((x, height - 30), footer, fill=(255, 255, 255, 150), font=small_font)
-        except:
-            pass
-            
-    except Exception as e:
-        logger.error(f"Text error: {str(e)}")
-
-def apply_style_effects(img: Image.Image, style: str) -> Image.Image:
-    """Apply artistic style effects to the image"""
-    try:
-        if style == "oil":
-            img = img.filter(ImageFilter.SMOOTH_MORE)
-            img = img.filter(ImageFilter.EDGE_ENHANCE)
-        elif style == "sketch":
-            img = img.filter(ImageFilter.CONTOUR)
-            img = ImageEnhance.Contrast(img).enhance(2.0)
-        elif style == "watercolor":
-            img = img.filter(ImageFilter.SMOOTH)
-            img = ImageEnhance.Color(img).enhance(0.8)
-        elif style == "cartoon":
-            img = img.filter(ImageFilter.EDGE_ENHANCE_MORE)
-            img = ImageEnhance.Color(img).enhance(1.2)
-        elif style == "cyberpunk":
-            img = ImageEnhance.Color(img).enhance(1.5)
-            img = ImageEnhance.Contrast(img).enhance(1.3)
-        elif style == "minimalist":
-            img = ImageEnhance.Color(img).enhance(0.5)
-            img = ImageEnhance.Contrast(img).enhance(0.8)
-        elif style == "3d":
-            img = ImageEnhance.Contrast(img).enhance(1.2)
-            img = ImageEnhance.Sharpness(img).enhance(1.5)
-        elif style == "fantasy":
-            img = ImageEnhance.Color(img).enhance(1.3)
-            img = img.filter(ImageFilter.SMOOTH)
-        elif style == "realistic":
-            img = ImageEnhance.Sharpness(img).enhance(1.1)
-        elif style == "anime":
-            img = ImageEnhance.Color(img).enhance(1.4)
-            img = ImageEnhance.Contrast(img).enhance(1.1)
-    except Exception as e:
-        logger.error(f"Style error: {str(e)}")
-    
-    return img
+    # Spiral arms
+    for r in range(20, 200, 5):
+        for angle in range(0, 360, 10):
+            rad = math.radians(angle)
+            spiral_r = r + 20 * math.sin(rad * 3)
+            x = int(cx + spiral_r * math.cos(rad))
+            y = int(cy + spiral_r * math.sin(rad) * 0.4)
+            if 0 < x < width and 0 < y < height:
+                brightness = int(100 + 100 * (1 - r / 250))
+                draw.ellipse([x, y, x + 3, y + 3], 
+                           fill=(brightness, brightness, 255, brightness // 2))
 
 def create_fallback_image(width: int, height: int, prompt: str) -> bytes:
-    """Create a simple fallback image if main generation fails"""
+    """Create a simple fallback image"""
     try:
-        img = Image.new('RGB', (width, height), color=(50, 50, 100))
+        img = Image.new('RGB', (width, height), color=(30, 30, 60))
         draw = ImageDraw.Draw(img)
         
-        # Simple gradient
+        # Gradient
         for y in range(height):
-            r = int(50 + (100 * y / height))
-            g = int(50 + (50 * y / height))
-            b = int(100 + (100 * y / height))
+            r = int(30 + (50 * y / height))
+            g = int(30 + (40 * y / height))
+            b = int(60 + (80 * y / height))
             draw.rectangle([(0, y), (width, y + 1)], fill=(r, g, b))
         
         # Add text
@@ -452,42 +735,38 @@ def create_fallback_image(width: int, height: int, prompt: str) -> bytes:
         except:
             font = ImageFont.load_default()
         
-        # Wrap text
         words = prompt.split()
         lines = []
-        current_line = []
-        for word in words[:20]:
-            current_line.append(word)
-            if len(' '.join(current_line)) > 30:
-                if len(current_line) > 1:
-                    current_line.pop()
-                    lines.append(' '.join(current_line))
-                    current_line = [word]
+        current = []
+        for word in words[:10]:
+            current.append(word)
+            if len(' '.join(current)) > 25:
+                if len(current) > 1:
+                    current.pop()
+                    lines.append(' '.join(current))
+                    current = [word]
                 else:
-                    lines.append(' '.join(current_line))
-                    current_line = []
-        if current_line:
-            lines.append(' '.join(current_line))
+                    lines.append(' '.join(current))
+                    current = []
+        if current:
+            lines.append(' '.join(current))
         
-        y_offset = height // 3
-        for line in lines[:4]:
+        y = height // 3
+        for line in lines[:3]:
             bbox = draw.textbbox((0, 0), line, font=font)
             x = (width - (bbox[2] - bbox[0])) // 2
-            draw.text((x, y_offset), line, fill=(255, 255, 255), font=font)
-            y_offset += bbox[3] - bbox[1] + 10
+            draw.text((x, y), line, fill=(255, 255, 255), font=font)
+            y += bbox[3] - bbox[1] + 10
         
-        # Convert to bytes
         img_bytes = io.BytesIO()
         img.save(img_bytes, format='PNG')
         img_bytes.seek(0)
         return img_bytes.read()
         
-    except Exception as e:
-        logger.error(f"Fallback error: {str(e)}")
+    except:
         return b""
 
 def format_size(bytes_count: int) -> str:
-    """Format bytes to human readable"""
     for unit in ['B', 'KB', 'MB']:
         if bytes_count < 1024:
             return f"{bytes_count:.1f} {unit}"
@@ -504,14 +783,10 @@ async def cmd_start(message: Message):
     welcome = (
         f"🎨 **Welcome to {BOT_NAME}!**\n\n"
         f"👋 Hello @{user.username or 'User'}!\n\n"
-        f"I create unique images from your text descriptions.\n"
-        f"**NO API KEY NEEDED** - Everything runs locally!\n\n"
+        f"I create **actual images** with scenes, objects, and landscapes\n"
+        f"from your text descriptions.\n\n"
+        f"✨ **NO API KEY NEEDED!**\n\n"
         f"📊 You've generated {data['settings']['total_generated']} images\n\n"
-        f"✨ **Features:**\n"
-        f"• 🎨 10+ Art Styles\n"
-        f"• 📐 5 Image Sizes\n"
-        f"• 💡 Ready-to-use Ideas\n"
-        f"• ⚙️ Customizable Settings\n\n"
         f"🚀 Tap **Generate** below to start!"
     )
     
@@ -525,12 +800,15 @@ async def cmd_start(message: Message):
 async def cmd_generate(message: Message, state: FSMContext):
     await state.set_state(GeneratorStates.WAITING_PROMPT)
     await message.reply(
-        "🎨 **Describe your image!**\n\n"
-        "Be creative! I'll generate a unique image based on your words.\n\n"
-        "📝 **Examples:**\n"
-        "• \"A beautiful sunset over the ocean with golden clouds\"\n"
-        "• \"A cute cat sitting in a magical forest with butterflies\"\n"
-        "• \"A futuristic cyberpunk city with neon lights and flying cars\"\n\n"
+        "🎨 **Describe what you want to see!**\n\n"
+        "I'll draw a scene with:\n"
+        "• 🌅 Sunsets & Beaches\n"
+        "• 🐱 Animals & Nature\n"
+        "• 🚀 Space & Rocket Launches\n"
+        "• 🏰 Fantasy Castles & Dragons\n"
+        "• 🌃 Cyberpunk Cities\n"
+        "• 🏔️ Mountains & Forests\n\n"
+        "📝 **Try:** \"A beautiful sunset over the ocean with palm trees\"\n\n"
         "Send /cancel to cancel.",
         parse_mode="Markdown"
     )
@@ -597,11 +875,14 @@ async def cmd_help(message: Message):
         "🤖 **How to use:**\n"
         "1. Send /generate or tap Generate\n"
         "2. Type your image description\n"
-        "3. Watch your image come to life!\n\n"
-        "🎯 **Tips:**\n"
-        "• Be creative with your descriptions\n"
-        "• Mention colors, mood, and elements\n"
-        "• Use 3-15 words for best results\n\n"
+        "3. Watch your scene come to life!\n\n"
+        "🎯 **What I can draw:**\n"
+        "• Sunsets, Beaches, Oceans\n"
+        "• Cats, Animals, Nature\n"
+        "• Space, Rockets, Galaxies\n"
+        "• Castles, Dragons, Fantasy\n"
+        "• Cyberpunk, Futuristic Cities\n"
+        "• Mountains, Forests, Flowers\n\n"
         "📌 **Commands:**\n"
         "/start - Main menu\n"
         "/generate - Generate image\n"
@@ -620,15 +901,16 @@ async def cmd_about(message: Message):
         f"🤖 **{BOT_NAME}**\n\n"
         f"📦 Version: {BOT_VERSION}\n"
         f"👤 Username: @{BOT_USERNAME}\n\n"
-        "🎨 **Image Generation**\n"
-        "Creates unique images from your text prompts.\n"
+        "🎨 **Professional Image Generator**\n"
+        "Creates actual scenes, objects, and landscapes\n"
         "**NO API KEYS NEEDED!**\n\n"
-        "✨ **Features:**\n"
-        "• 10+ Art Styles\n"
-        "• 5 Image Sizes\n"
-        "• 100% Free\n"
-        "• No API Required\n"
-        "• Usage Statistics\n\n"
+        "✨ **What I draw:**\n"
+        "• Landscapes & Nature\n"
+        "• Animals & Creatures\n"
+        "• Space & Sci-Fi\n"
+        "• Fantasy & Magic\n"
+        "• Cyberpunk & Futuristic\n"
+        "• And much more!\n\n"
         "🔒 **Privacy:**\n"
         "No data is stored permanently.\n\n"
         "⭐ Made with ❤️ for Telegram"
@@ -657,16 +939,12 @@ async def handle_prompt(message: Message, state: FSMContext):
         await message.reply("❌ Please send a text description.")
         return
     
-    # Get settings
-    data = get_user_data(user_id)
-    settings = data["settings"]
-    
+    settings = get_user_data(user_id)["settings"]
     size = IMAGE_SIZES.get(settings["size"], IMAGE_SIZES["square"])
     style = ART_STYLES.get(settings["style"], ART_STYLES["realistic"])
     
-    # Send processing message
     processing = await message.reply(
-        f"🎨 **Creating your image...**\n\n"
+        f"🎨 **Creating your scene...**\n\n"
         f"📝 Prompt: {prompt[:150]}{'...' if len(prompt) > 150 else ''}\n"
         f"📐 Size: {size['label']}\n"
         f"🎨 Style: {style['label']}\n\n"
@@ -675,8 +953,7 @@ async def handle_prompt(message: Message, state: FSMContext):
     )
     
     try:
-        # Generate image (NO API REQUIRED!)
-        image_data = generate_image_from_prompt(
+        image_data = generate_image(
             prompt=prompt,
             width=size["width"],
             height=size["height"],
@@ -684,7 +961,7 @@ async def handle_prompt(message: Message, state: FSMContext):
         )
         
         if image_data and len(image_data) > 1000:
-            # Update stats
+            data = get_user_data(user_id)
             data["settings"]["total_generated"] += 1
             data["settings"]["last_generated"] = datetime.now().strftime("%Y-%m-%d %H:%M")
             data["history"].append({
@@ -693,13 +970,12 @@ async def handle_prompt(message: Message, state: FSMContext):
                 "timestamp": datetime.now().isoformat()
             })
             
-            # Send image
             input_file = BufferedInputFile(image_data, filename="generated_image.png")
             
             await message.reply_photo(
                 photo=input_file,
                 caption=(
-                    f"🎨 **Image Created!**\n\n"
+                    f"🎨 **Scene Created!**\n\n"
                     f"📝 Prompt: {prompt[:200]}{'...' if len(prompt) > 200 else ''}\n"
                     f"📐 Size: {size['label']}\n"
                     f"🎨 Style: {style['label']}\n"
@@ -715,11 +991,7 @@ async def handle_prompt(message: Message, state: FSMContext):
         else:
             await message.reply(
                 "⚠️ **Generation Failed**\n\n"
-                "I couldn't create an image right now.\n\n"
-                "💡 **Tips:**\n"
-                "• Try a different prompt\n"
-                "• Use simpler words\n"
-                "• Try again in a moment",
+                "Please try again with a different prompt.",
                 parse_mode="Markdown"
             )
             await processing.delete()
@@ -740,10 +1012,8 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
     user_id = callback.from_user.id
     data = get_user_data(user_id)
     settings = data["settings"]
-    
     action = callback.data
     
-    # Navigation
     if action == "back_menu":
         await callback.message.edit_text(
             "🎨 **Main Menu**\n\n"
@@ -757,7 +1027,6 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
         await cmd_settings(callback.message)
         return
     
-    # Main Actions
     elif action == "generate":
         await cmd_generate(callback.message, state)
         return
@@ -783,7 +1052,6 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
         await cmd_help(callback.message)
         return
     
-    # Settings Changes
     elif action == "change_size":
         await callback.message.edit_text(
             "📐 **Select Image Size**\n\n"
@@ -803,8 +1071,8 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
         return
         
     elif action == "reset_settings":
-        data["settings"]["size"] = "square"
-        data["settings"]["style"] = "realistic"
+        settings["size"] = "square"
+        settings["style"] = "realistic"
         await callback.message.edit_text(
             "✅ **Settings Reset!**\n\n"
             "All settings have been reset to default.",
@@ -815,7 +1083,6 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    # Size Selection
     elif action.startswith("size_"):
         size_id = action.replace("size_", "")
         if size_id in IMAGE_SIZES:
@@ -831,7 +1098,6 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
             )
         return
     
-    # Style Selection
     elif action.startswith("style_"):
         style_id = action.replace("style_", "")
         if style_id in ART_STYLES:
@@ -847,12 +1113,11 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
             )
         return
     
-    # Ideas
     elif action.startswith("idea_"):
         prompt = action.replace("idea_", "")
         if prompt:
             await callback.message.edit_text(
-                f"🎨 **Creating your image...**\n\n"
+                f"🎨 **Creating your scene...**\n\n"
                 f"📝 Prompt: {prompt}\n"
                 f"⏳ Please wait...",
                 parse_mode="Markdown"
@@ -861,7 +1126,7 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
             size = IMAGE_SIZES.get(settings["size"], IMAGE_SIZES["square"])
             style = ART_STYLES.get(settings["style"], ART_STYLES["realistic"])
             
-            image_data = generate_image_from_prompt(
+            image_data = generate_image(
                 prompt=prompt,
                 width=size["width"],
                 height=size["height"],
@@ -874,7 +1139,7 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.message.reply_photo(
                     photo=input_file,
                     caption=(
-                        f"🎨 **Image Created!**\n\n"
+                        f"🎨 **Scene Created!**\n\n"
                         f"📝 Prompt: {prompt}\n"
                         f"📐 Size: {size['label']}\n"
                         f"🎨 Style: {style['label']}"
@@ -891,7 +1156,6 @@ async def handle_callback(callback: CallbackQuery, state: FSMContext):
                 await callback.message.reply("⚠️ Failed to create image. Please try again.")
         return
     
-    # Regenerate
     elif action == "regenerate":
         if data["history"]:
             last = data["history"][-1]
@@ -916,7 +1180,7 @@ async def main():
         logger.info("=" * 60)
         logger.info(f"🎨 {BOT_NAME} v{BOT_VERSION}")
         logger.info(f"🤖 Username: @{BOT_USERNAME}")
-        logger.info(f"📦 Mode: NO API KEY NEEDED")
+        logger.info(f"📦 Mode: PROFESSIONAL - NO API KEY NEEDED")
         logger.info("=" * 60)
         
         await bot.delete_webhook(drop_pending_updates=True)
